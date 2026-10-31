@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NCR Air Quality Tracker</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#9aa3b2; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; }
+  header .sub { color:var(--muted); font-size:13px; }
+  header .spacer { flex:1; }
+  button { background:#262b36; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 12px; cursor:pointer; font-size:13px; }
+  button:hover { background:#303644; }
+  label.toggle { font-size:13px; color:var(--muted); display:flex; gap:6px; align-items:center; }
+  main { display:grid; grid-template-columns: 1.3fr 1fr; gap:14px; padding:14px 20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  #map { height:520px; border-radius:8px; }
+  h2 { font-size:14px; margin:0 0 10px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { padding:7px 6px; border-bottom:1px solid var(--line); text-align:right; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--muted); font-weight:500; }
+  tr.row { cursor:pointer; } tr.row:hover { background:#1f2430; } tr.sel { background:#232a38; }
+  .pill { display:inline-block; min-width:44px; text-align:center; padding:2px 8px; border-radius:10px; font-weight:600; color:#111; }
+  .stats { display:grid; grid-template-columns: repeat(4,1fr); gap:10px; margin-bottom:12px; }
+  .stat { background:#1f2430; border-radius:8px; padding:10px; }
+  .stat .k { font-size:11px; color:var(--muted); } .stat .v { font-size:20px; font-weight:700; margin-top:2px; }
+  .legend { display:flex; gap:6px; flex-wrap:wrap; font-size:11px; margin-top:10px; }
+  .legend span { padding:2px 7px; border-radius:8px; color:#111; font-weight:600; }
+  #msg { padding:0 20px; color:#ffb4a8; font-size:13px; }
+  footer { color:var(--muted); font-size:12px; padding:4px 20px 20px; line-height:1.5; }
+  footer a { color:#8fb8ff; }
+  .full { grid-column: 1 / -1; }
+  .wind-arrow { font-size:22px; display:inline-block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>NCR Air Quality Tracker</h1>
+  <span class="sub" id="updated">Loading…</span>
+  <span class="spacer"></span>
+  <label class="toggle"><input type="checkbox" id="fireToggle"> Show farm fires (needs data/fires.json)</label>
+  <button id="refresh">Refresh</button>
+</header>
+<div id="msg"></div>
+<main>
+  <section class="card">
+    <h2>Map — Indian AQI (24-h avg, PM2.5/PM10)</h2>
+    <div id="map"></div>
+    <div class="legend" id="legend"></div>
+  </section>
+  <section class="card">
+    <h2>Stations</h2>
+    <table>
+      <thead><tr><th>Location</th><th>AQI (IN)</th><th>PM2.5</th><th>PM10</th><th>NO₂</th><th>AOD</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </section>
+  <section class="card full">
+    <h2 id="detailTitle">Detail</h2>
+    <div class="stats" id="stats"></div>
+    <canvas id="chart" height="90"></canvas>
+  </section>
+</main>
+<footer>
+  Pollutant data: <a href="https://open-meteo.com/en/docs/air-quality-api">Open-Meteo Air Quality API</a>, which serves the
+  Copernicus Atmosphere Monitoring Service (CAMS) model (it assimilates satellite observations, e.g. Sentinel-5P &amp; MODIS AOD).
+  Wind: Open-Meteo forecast. Farm fires: NASA FIRMS VIIRS (via <code>fetch_fires.py</code>).
+  The Indian AQI here is computed from PM2.5/PM10 only using CPCB breakpoints and a trailing 24-h mean of modelled values. It is an estimate, not an official CPCB reading.
+</footer>
+
+<script>
+// ---------- Config ----------
+// Optional: free CARTO basemap key (https://carto.com/basemaps/apikey/) for the dark map.
+// Leave empty to use standard OpenStreetMap tiles (serve the folder over http://localhost).
+const CARTO_KEY = "cb1_4zbr_1_5e2a31385486ad0e74be3c2f";
+
+const LOCATIONS = [
+  { name: "Connaught Place, Delhi", lat: 28.6315, lon: 77.2167 },
+  { name: "Anand Vihar, Delhi",     lat: 28.6469, lon: 77.3159 },
+  { name: "Rohini, Delhi",          lat: 28.7360, lon: 77.1130 },
+  { name: "Dwarka, Delhi",          lat: 28.5921, lon: 77.0460 },
+  { name: "Okhla, Delhi",           lat: 28.5355, lon: 77.2710 },
+  { name: "Noida Sector 62",        lat: 28.6270, lon: 77.3720 },
+  { name: "Noida Sector 125",       lat: 28.5440, lon: 77.3290 },
+  { name: "Greater Noida",          lat: 28.4744, lon: 77.5040 },
+  { name: "Ghaziabad",              lat: 28.6692, lon: 77.4538 },
+  { name: "Gurugram",               lat: 28.4595, lon: 77.0266 },
+  { name: "Faridabad",              lat: 28.4089, lon: 77.3178 },
+  { name: "Sonipat",                lat: 28.9931, lon: 77.0151 },
+];
+const AQ_URL = "https://air-quality-api.open-meteo.com/v1/air-quality";
+const WX_URL = "https://api.open-meteo.com/v1/forecast";
+
+// CPCB National AQI categories and breakpoints
+const CATS = [
+  { name: "Good",         max: 50,  color: "#4caf50" },
+  { name: "Satisfactory", max: 100, color: "#a3d65c" },
+  { name: "Moderate",     max: 200, color: "#ffd54f" },
+  { name: "Poor",         max: 300, color: "#ff9800" },
+  { name: "Very Poor",    max: 400, color: "#f44336" },
+  { name: "Severe",       max: 500, color: "#a0153e" },
+];
+const BP = {
+  pm25: [[0,30,0,50],[30,60,51,100],[60,90,101,200],[90,120,201,300],[120,250,301,400],[250,380,401,500]],
+  pm10: [[0,50,0,50],[50,100,51,100],[100,250,101,200],[250,350,201,300],[350,430,301,400],[430,510,401,500]],
+};
+function subIndex(c, table) {
+  if (c == null || isNaN(c)) return null;
+  for (const [cl, ch, il, ih] of table) if (c <= ch) return Math.round(il + (ih - il) * (c - cl) / (ch - cl));
+  return 500;
+}
+function catOf(aqi) { return CATS.find(c => aqi <= c.max) || CATS[CATS.length - 1]; }
+function mean(a) { const v = a.filter(x => x != null); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; }
+const fmt = (x, d = 0) => x == null ? "–" : Number(x).toFixed(d);
+
+// ---------- State ----------
+let data = [];          // per-location processed results
+let selected = 0;
+let chart, map, markers = [], fireLayer = null, wind = null;
+
+// ---------- Fetching ----------
+async function fetchAll() {
+  const lat = LOCATIONS.map(l => l.lat).join(",");
+  const lon = LOCATIONS.map(l => l.lon).join(",");
+  const aqParams = new URLSearchParams({
+    latitude: lat, longitude: lon, timezone: "Asia/Kolkata", past_days: "1", forecast_days: "4",
+    current: "us_aqi,pm2_5,pm10,nitrogen_dioxide,carbon_monoxide,ozone,sulphur_dioxide,aerosol_optical_depth,dust",
+    hourly: "pm2_5,pm10,nitrogen_dioxide,aerosol_optical_depth",
+  });
+  const wxParams = new URLSearchParams({
+    latitude: "28.6139", longitude: "77.2090", timezone: "Asia/Kolkata",
+    current: "temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m",
+  });
+  const [aqRes, wxRes] = await Promise.all([fetch(`${AQ_URL}?${aqParams}`), fetch(`${WX_URL}?${wxParams}`)]);
+  if (!aqRes.ok) throw new Error(`Air-quality API ${aqRes.status}`);
+  let aq = await aqRes.json();
+  if (!Array.isArray(aq)) aq = [aq];
+  wind = wxRes.ok ? (await wxRes.json()).current : null;
+  return aq;
+}
+
+function process(aq) {
+  return aq.map((r, i) => {
+    const h = r.hourly, t = h.time;
+    // trailing 24 h up to the current hour
+    const nowIdx = Math.max(0, t.findIndex(x => x >= r.current.time.slice(0, 13)));
+    const from = Math.max(0, nowIdx - 23);
+    const pm25_24 = mean(h.pm2_5.slice(from, nowIdx + 1));
+    const pm10_24 = mean(h.pm10.slice(from, nowIdx + 1));
+    const s25 = subIndex(pm25_24, BP.pm25), s10 = subIndex(pm10_24, BP.pm10);
+    const aqi = Math.max(s25 ?? 0, s10 ?? 0);
+    return { ...LOCATIONS[i], cur: r.current, hourly: h, nowIdx, pm25_24, pm10_24, aqi,
+             driver: (s25 ?? 0) >= (s10 ?? 0) ? "PM2.5" : "PM10" };
+  });
+}
+
+// ---------- Rendering ----------
+function initMap() {
+  map = L.map("map").setView([28.62, 77.25], 10);
+  const osmAttr = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+  if (CARTO_KEY) {
+    // CARTO dark basemap (free key from https://carto.com/basemaps/apikey/). Styles: dark_all, light_all, voyager
+    L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png?key=${CARTO_KEY}`, {
+      maxZoom: 20, subdomains: "abcd", attribution: `${osmAttr} © <a href="https://carto.com/attributions">CARTO</a>`,
+    }).addTo(map);
+  } else {
+    // Standard OSM tiles: no key, but OSM blocks pages opened as file://. Serve with: python -m http.server
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: osmAttr }).addTo(map);
+    if (location.protocol === "file:")
+      setMsg("Map tiles need a local server: run  python -m http.server 8000  in this folder and open http://localhost:8000 (or set CARTO_KEY in index.html).");
+  }
+  document.getElementById("legend").innerHTML =
+    CATS.map(c => `<span style="background:${c.color}">${c.name} ≤${c.max}</span>`).join("");
+}
+
+function renderMap() {
+  markers.forEach(m => m.remove()); markers = [];
+  data.forEach((d, i) => {
+    const c = catOf(d.aqi);
+    const m = L.circleMarker([d.lat, d.lon], {
+      radius: 11 + Math.min(d.aqi, 500) / 40, color: "#111", weight: 1, fillColor: c.color, fillOpacity: .85,
+    }).addTo(map)
+      .bindTooltip(`<b>${d.name}</b><br>AQI ${d.aqi} (${c.name})<br>PM2.5 ${fmt(d.cur.pm2_5)} µg/m³`)
+      .on("click", () => select(i));
+    markers.push(m);
+  });
+}
+
+function renderTable() {
+  document.getElementById("tbody").innerHTML = data
+    .map((d, i) => ({ d, i })).sort((a, b) => b.d.aqi - a.d.aqi)
+    .map(({ d, i }) => {
+      const c = catOf(d.aqi);
+      return `<tr class="row ${i === selected ? "sel" : ""}" data-i="${i}">
+        <td>${d.name}</td><td><span class="pill" style="background:${c.color}">${d.aqi}</span></td>
+        <td>${fmt(d.cur.pm2_5)}</td><td>${fmt(d.cur.pm10)}</td><td>${fmt(d.cur.nitrogen_dioxide)}</td>
+        <td>${fmt(d.cur.aerosol_optical_depth, 2)}</td></tr>`;
+    }).join("");
+  document.querySelectorAll("tr.row").forEach(tr => tr.onclick = () => select(+tr.dataset.i));
+}
+
+function renderDetail() {
+  const d = data[selected]; if (!d) return;
+  const c = catOf(d.aqi);
+  document.getElementById("detailTitle").textContent = `Detail — ${d.name}`;
+  const windHtml = wind
+    ? `<span class="wind-arrow" style="transform:rotate(${wind.wind_direction_10m + 180}deg)">↑</span>
+       ${fmt(wind.wind_speed_10m)} km/h from ${fmt(wind.wind_direction_10m)}°`
+    : "–";
+  document.getElementById("stats").innerHTML = `
+    <div class="stat"><div class="k">Indian AQI (24-h, driver ${d.driver})</div><div class="v" style="color:${c.color}">${d.aqi} · ${c.name}</div></div>
+    <div class="stat"><div class="k">PM2.5 24-h mean (µg/m³)</div><div class="v">${fmt(d.pm25_24)}</div></div>
+    <div class="stat"><div class="k">PM10 24-h mean (µg/m³)</div><div class="v">${fmt(d.pm10_24)}</div></div>
+    <div class="stat"><div class="k">Delhi wind (fire-smoke transport)</div><div class="v" style="font-size:15px">${windHtml}</div></div>`;
+
+  const h = d.hourly;
+  const labels = h.time.map(t => t.slice(5, 13).replace("T", " ") + "h");
+  const cfg = {
+    type: "line",
+    data: { labels, datasets: [
+      { label: "PM2.5 (µg/m³)", data: h.pm2_5, borderColor: "#ff9800", pointRadius: 0, tension: .3 },
+      { label: "PM10 (µg/m³)",  data: h.pm10,  borderColor: "#8fb8ff", pointRadius: 0, tension: .3 },
+      { label: "NO₂ (µg/m³)",   data: h.nitrogen_dioxide, borderColor: "#c792ea", pointRadius: 0, tension: .3, hidden: true },
+    ]},
+    options: {
+      responsive: true, interaction: { mode: "index", intersect: false },
+      plugins: { legend: { labels: { color: "#cfd5e1" } },
+        title: { display: true, color: "#9aa3b2", text: "Past 24 h + 4-day CAMS forecast (vertical line = now)" } },
+      scales: { x: { ticks: { color: "#9aa3b2", maxTicksLimit: 12 }, grid: { color: "#232833" } },
+                y: { ticks: { color: "#9aa3b2" }, grid: { color: "#232833" }, beginAtZero: true } },
+    },
+    plugins: [{ id: "now", afterDraw(ch) {
+      const x = ch.scales.x.getPixelForValue(d.nowIdx), { top, bottom } = ch.chartArea, g = ch.ctx;
+      g.save(); g.strokeStyle = "#e8eaf0"; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(x, top); g.lineTo(x, bottom); g.stroke(); g.restore();
+    }}],
+  };
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById("chart"), cfg);
+}
+
+function select(i) { selected = i; renderTable(); renderDetail(); map.panTo([data[i].lat, data[i].lon]); }
+
+// ---------- Farm fires (NASA FIRMS, produced by fetch_fires.py) ----------
+async function toggleFires(on) {
+  if (fireLayer) { fireLayer.remove(); fireLayer = null; }
+  if (!on) { map.setView([28.62, 77.25], 10); return; }
+  try {
+    const r = await fetch("data/fires.json", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    const fj = await r.json();
+    fireLayer = L.layerGroup(fj.fires.map(f => L.circleMarker([f.lat, f.lon], {
+      radius: 2.5, color: "#ff5722", weight: 0, fillOpacity: .8,
+    }).bindTooltip(`Fire · ${f.date} ${f.time} · FRP ${f.frp} MW`))).addTo(map);
+    map.fitBounds([[27.5, 73.8], [32.5, 78.5]]);
+    setMsg(`${fj.fires.length} fire detections (${fj.source}, last ${fj.days} day(s), fetched ${fj.fetched_at}).`, true);
+  } catch (e) {
+    setMsg("No data/fires.json found. Run: python fetch_fires.py --key YOUR_FIRMS_KEY, then serve this folder with python -m http.server.");
+    document.getElementById("fireToggle").checked = false;
+  }
+}
+
+function setMsg(t, ok) { const m = document.getElementById("msg"); m.textContent = t; m.style.color = ok ? "#9fe0a8" : "#ffb4a8"; }
+
+async function load() {
+  if (CARTO_KEY || location.protocol !== "file:") setMsg("");
+  document.getElementById("updated").textContent = "Loading…";
+  try {
+    data = process(await fetchAll());
+    const t = data[0].cur.time.replace("T", " ");
+    document.getElementById("updated").textContent = `CAMS data for ${t} IST · ${data.length} locations`;
+    renderMap(); renderTable(); renderDetail();
+  } catch (e) {
+    document.getElementById("updated").textContent = "Failed to load";
+    setMsg(`Could not fetch data (${e.message}). Check your internet connection; Open-Meteo needs no API key.`);
+  }
+}
+
+initMap();
+document.getElementById("refresh").onclick = load;
+document.getElementById("fireToggle").onchange = e => toggleFires(e.target.checked);
+load();
+setInterval(load, 30 * 60 * 1000); // CAMS updates hourly; refresh every 30 min
+</script>
+</body>
+</html>
