@@ -1,0 +1,17 @@
+{
+  "description": "Check AQI breakpoint tables, the fires.json schema and hard-coded API keys after Claude edits tracker files.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/check_aqi_edit.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

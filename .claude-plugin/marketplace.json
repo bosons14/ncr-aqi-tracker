@@ -1,0 +1,17 @@
+{
+  "name": "ncr-aqi-tracker",
+  "owner": {
+    "name": "Subhendra Basu",
+    "url": "https://github.com/bosons14"
+  },
+  "metadata": {
+    "description": "Delhi-NCR air quality tools for Claude Code by Subhendra Basu."
+  },
+  "plugins": [
+    {
+      "name": "aqi-ops",
+      "source": "./plugin",
+      "description": "Delhi-NCR Indian AQI now and forecast, farm fires and stubble-smoke outlook, CPCB comparison, alerts, and the AQI tracker dashboard."
+    }
+  ]
+}
