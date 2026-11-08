@@ -1,0 +1,13 @@
+{
+  "name": "aqi-ops",
+  "version": "0.1.0",
+  "description": "Delhi-NCR air quality for Claude Code: Indian (CPCB) AQI now and forecast from Copernicus CAMS via Open-Meteo, NASA FIRMS farm-fire and stubble-smoke outlook, CPCB station comparison, Telegram alerts, and tools to run and extend the ncr-aqi-tracker dashboard.",
+  "author": {
+    "name": "Subhendra Basu",
+    "url": "https://github.com/bosons14"
+  },
+  "homepage": "https://github.com/bosons14/ncr-aqi-tracker",
+  "repository": "https://github.com/bosons14/ncr-aqi-tracker",
+  "license": "MIT",
+  "keywords": ["air-quality", "aqi", "delhi", "ncr", "india", "cpcb", "pollution", "pm2.5", "stubble-burning", "firms", "cams", "open-meteo", "satellite"]
+}

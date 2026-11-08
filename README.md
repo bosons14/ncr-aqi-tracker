@@ -35,6 +35,19 @@ To keep fires fresh, schedule step 1, e.g. with cron every 3 hours:
 0 */3 * * * cd /path/to/ncr-aqi-tracker && FIRMS_MAP_KEY=xxx python3 fetch_fires.py
 ```
 
+## Claude Code plugin
+
+This repo is also a Claude Code marketplace. The `aqi-ops` plugin lets Claude answer "what's the AQI in
+Noida?", forecast the next days, check stubble fires and smoke, compare with CPCB stations and work on
+this dashboard:
+
+```
+/plugin marketplace add bosons14/ncr-aqi-tracker
+/plugin install aqi-ops@ncr-aqi-tracker
+```
+
+See [plugin/README.md](plugin/README.md) for tools, keys and how the AQI is computed.
+
 ## Roadmap (good next prompts for Claude Code)
 
 1. **Sentinel-5P NO₂ / aerosol maps**: pull TROPOMI L2 from Copernicus Data Space (openEO or STAC) and render a raster overlay.
